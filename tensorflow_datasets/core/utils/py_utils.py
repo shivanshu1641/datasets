@@ -25,6 +25,7 @@ import io
 import itertools
 import logging
 import os
+import pathlib
 import random
 import shutil
 import string
@@ -32,13 +33,14 @@ import sys
 import textwrap
 import threading
 import types
+import typing
 from typing import Any, Callable, Iterator, List, NoReturn, Tuple, TypeVar, Union
 import uuid
 
 from six.moves import urllib
 import tensorflow.compat.v2 as tf
 from tensorflow_datasets.core import constants
-from tensorflow_datasets.core.utils.type_utils import Tree
+from tensorflow_datasets.core.utils import type_utils
 
 
 # pylint: disable=g-import-not-at-top
@@ -49,6 +51,10 @@ else:
 
 # pylint: enable=g-import-not-at-top
 
+ReadOnlyPath = type_utils.ReadOnlyPath
+ReadWritePath = type_utils.ReadWritePath
+PathLike = type_utils.PathLike
+Tree = type_utils.Tree
 
 # NOTE: When used on an instance method, the cache is shared across all
 # instances and IS NOT per-instance.
@@ -156,13 +162,6 @@ class memoized_property(property):  # pylint: disable=invalid-name
       cached = self.fget(obj)  # pytype: disable=attribute-error
       setattr(obj, attr, cached)
     return cached
-
-
-def resource_path(
-    package: Union[str, types.ModuleType]
-) -> importlib_resources.abc.Traversable:  # pytype: disable=module-attr
-  """Returns `importlib.resources.files`."""
-  return importlib_resources.files(package)  # pytype: disable=module-attr
 
 
 def map_nested(function, data_struct, dict_only=False, map_tuple=False):
@@ -386,8 +385,8 @@ def incomplete_dir(dirname):
 def tfds_dir() -> str:
   """Path to tensorflow_datasets directory.
 
-  The difference with `tfds.core.get_tfds_path` is that this function can be
-  used for write access while `tfds.core.get_tfds_path` should be used for
+  The difference with `tfds.core.tfds_path` is that this function can be
+  used for write access while `tfds.core.tfds_path` should be used for
   read-only.
 
   Returns:
@@ -405,17 +404,45 @@ def atomic_write(path, mode):
   tf.io.gfile.rename(tmp_path, path, overwrite=True)
 
 
-def get_tfds_path(relative_path):
-  """Returns absolute path to file given path relative to tfds root."""
-  path = os.path.join(tfds_dir(), relative_path)
+def tfds_path(*relative_path: PathLike) -> ReadOnlyPath:
+  """Returns path to file given path relative to tfds root.
+
+  The following examples are equivalent:
+
+  ```
+  path = tfds.core.tfds_path() / 'path/to/data.txt'
+  path = tfds.core.tfds_path('path/to/data.txt')
+  path = tfds.core.tfds_path('path', 'to', 'data.txt')
+  ```
+
+  Note: Even if `/` is used, those examples are compatible with Windows, as
+  pathlib will automatically normalize the paths.
+
+  Args:
+    *relative_path: Relative path, eventually to concatenate.
+
+  Returns:
+    path: The absolute TFDS path.
+  """
+  return resource_path('tensorflow_datasets').joinpath(*relative_path)
+
+
+def resource_path(
+    package: Union[str, types.ModuleType]
+) -> ReadOnlyPath:
+  """Returns `importlib.resources.files`."""
+  return importlib_resources.files(package)  # pytype: disable=module-attr
+
+
+def to_write_path(path: ReadOnlyPath) -> ReadWritePath:
+  """Cast the path to a read-write Path."""
+  if not isinstance(path, pathlib.Path):
+    raise ValueError(
+        f'Can\'t write {path!r}. Make sure you\'re not running from a '
+        'zipapp.'
+    )
+  path = typing.cast(ReadWritePath, path)
   return path
-
-
-def get_resource_path(path) -> str:
-  """Get the read-only resource path."""
-  # For compatibility with `zip` archives, we should replace this by a pathlike
-  # abstraction, which uses `importlib.resource.files()`
-  return str(path)
 
 
 def read_checksum_digest(path, checksum_cls=hashlib.sha256):
